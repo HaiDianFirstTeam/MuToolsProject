@@ -1,0 +1,72 @@
+name: Build MuTools (Tauri)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - 'MuToolsCode/**'
+      - '.github/workflows/build.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-windows:
+    name: Build Windows (x64)
+    runs-on: windows-latest
+    env:
+      CARGO_TERM_COLOR: always
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: MuToolsCode/package-lock.json
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Rust 构建缓存
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: MuToolsCode/src-tauri -> target
+
+      - name: 安装前端依赖
+        working-directory: MuToolsCode
+        run: npm ci
+
+      - name: 构建前端 (Vite)
+        working-directory: MuToolsCode
+        run: npm run build
+
+      - name: 编译并打包 Tauri 应用
+        working-directory: MuToolsCode
+        run: npm run tauri build
+
+      - name: 收集安装包
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          $files = Get-ChildItem -Path MuToolsCode/src-tauri/target/release/bundle -Recurse -Include *.exe,*.msi
+          if ($files) { $files | Copy-Item -Destination artifacts -Force }
+          Get-ChildItem artifacts | Format-Table Name, Length
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: mutools-windows-x64
+          path: artifacts/**
+          if-no-files-found: warn
+          retention-days: 14
